@@ -9,6 +9,8 @@ import org.hibernate.annotations.BatchSize;
         @Index(name = "idx_barcode", columnList = "barcode"),
         @Index(name = "idx_barcode_price", columnList = "barcode, price_with_vat"),
         @Index(name = "idx_supplier_barcode", columnList = "supplier_sap, barcode")
+}, uniqueConstraints = {
+        @UniqueConstraint(name = "uk_supplier_barcode", columnNames = {"supplier_sap", "barcode"})
 })
 @Data
 @NoArgsConstructor

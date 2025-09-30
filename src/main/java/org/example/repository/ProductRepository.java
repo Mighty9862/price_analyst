@@ -1,19 +1,23 @@
 package org.example.repository;
 
 import org.example.entity.Product;
+import org.example.entity.Supplier;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
 import java.util.List;
-import java.util.Set;
 
 @Repository
 public interface ProductRepository extends JpaRepository<Product, Long> {
 
     // Базовый поиск по списку штрихкодов
     List<Product> findByBarcodeIn(List<String> barcodes);
+
+    // Поиск по штрихкоду и поставщику
+    @Query("SELECT p FROM Product p WHERE p.barcode = :barcode AND p.supplier = :supplier")
+    List<Product> findByBarcodeAndSupplier(@Param("barcode") String barcode, @Param("supplier") Supplier supplier);
 
     // Оптимизированный поиск лучших цен для одного штрихкода
     @Query("SELECT p FROM Product p WHERE p.barcode = :barcode ORDER BY p.priceWithVat ASC LIMIT 10")
@@ -27,10 +31,6 @@ public interface ProductRepository extends JpaRepository<Product, Long> {
         ORDER BY p.barcode, p.price_with_vat ASC
         """, nativeQuery = true)
     List<Product> findBestPricesByBarcodes(@Param("barcodes") List<String> barcodes);
-
-    // Пакетный поиск с лимитом
-    @Query("SELECT p FROM Product p WHERE p.barcode IN :barcodes ORDER BY p.priceWithVat ASC")
-    List<Product> findBestPricesByBarcodesBatch(@Param("barcodes") List<String> barcodes);
 
     boolean existsByBarcode(String barcode);
 

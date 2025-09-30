@@ -8,6 +8,7 @@ import org.example.entity.Product;
 import org.example.entity.Supplier;
 import org.example.repository.ProductRepository;
 import org.example.repository.SupplierRepository;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
@@ -32,9 +33,12 @@ public class ExcelProcessingService {
         List<String> errors = new ArrayList<>();
         int processed = 0;
         int failed = 0;
+        int skipped = 0;
 
         // Кэш поставщиков для оптимизации
         Map<String, Supplier> supplierCache = new HashMap<>();
+        // Кэш для проверки дубликатов (supplierSap + barcode)
+        Map<String, Boolean> duplicateCheckCache = new HashMap<>();
 
         try (Workbook workbook = WorkbookFactory.create(file.getInputStream())) {
             Sheet sheet = workbook.getSheetAt(0);
@@ -58,6 +62,28 @@ public class ExcelProcessingService {
                 if (row == null) continue;
 
                 try {
+                    String supplierSap = getCellStringValue(row.getCell(supplierSapCol));
+                    String barcode = getCellStringValue(row.getCell(barcodeCol));
+
+                    if (supplierSap == null || supplierSap.trim().isEmpty()) {
+                        throw new IllegalArgumentException("Не указан SAP код поставщика");
+                    }
+                    if (barcode == null || barcode.trim().isEmpty()) {
+                        throw new IllegalArgumentException("Не указан штрихкод");
+                    }
+
+                    supplierSap = supplierSap.trim();
+                    barcode = barcode.trim();
+
+                    // Проверка дубликата в текущем файле
+                    String duplicateKey = supplierSap + "|" + barcode;
+                    if (duplicateCheckCache.containsKey(duplicateKey)) {
+                        skipped++;
+                        log.debug("Пропущен дубликат в файле: поставщик {}, штрихкод {}", supplierSap, barcode);
+                        continue;
+                    }
+                    duplicateCheckCache.put(duplicateKey, true);
+
                     Product product = processDataRow(row, supplierSapCol, supplierNameCol, barcodeCol,
                             productSapCol, productNameCol, priceCol, supplierCache);
                     if (product != null) {
@@ -66,7 +92,7 @@ public class ExcelProcessingService {
 
                         // Пакетное сохранение
                         if (batchProducts.size() >= batchSize) {
-                            productRepository.saveAll(batchProducts);
+                            saveBatchWithDuplicateHandling(batchProducts);
                             batchProducts.clear();
                             log.info("Processed {} records...", processed);
                         }
@@ -82,17 +108,17 @@ public class ExcelProcessingService {
 
             // Сохраняем оставшиеся записи
             if (!batchProducts.isEmpty()) {
-                productRepository.saveAll(batchProducts);
+                saveBatchWithDuplicateHandling(batchProducts);
             }
 
             response.setSuccess(true);
-            response.setMessage(String.format("Обработано записей: %d, ошибок: %d. Время выполнения: %d мс",
-                    processed, failed, (System.currentTimeMillis() - startTime)));
+            response.setMessage(String.format("Обработано записей: %d, пропущено дубликатов: %d, ошибок: %d. Время выполнения: %d мс",
+                    processed, skipped, failed, (System.currentTimeMillis() - startTime)));
             response.setProcessedRecords(processed);
             response.setFailedRecords(failed);
 
-            log.info("File processing completed. Total: {}, Success: {}, Failed: {}, Time: {} ms",
-                    processed + failed, processed, failed, (System.currentTimeMillis() - startTime));
+            log.info("File processing completed. Total: {}, Success: {}, Skipped: {}, Failed: {}, Time: {} ms",
+                    processed + skipped + failed, processed, skipped, failed, (System.currentTimeMillis() - startTime));
 
         } catch (Exception e) {
             log.error("Ошибка обработки файла", e);
@@ -101,6 +127,44 @@ public class ExcelProcessingService {
         }
 
         return response;
+    }
+
+    private void saveBatchWithDuplicateHandling(List<Product> products) {
+        try {
+            productRepository.saveAll(products);
+        } catch (DataIntegrityViolationException e) {
+            // Если есть дубликаты в базе, сохраняем по одному
+            log.info("Обнаружены дубликаты при пакетном сохранении, переключаемся на поштучное сохранение...");
+            for (Product product : products) {
+                try {
+                    // Пытаемся обновить существующую запись или создать новую
+                    upsertProduct(product);
+                } catch (Exception ex) {
+                    log.warn("Не удалось сохранить товар {}/{}: {}",
+                            product.getSupplier().getSupplierSap(), product.getBarcode(), ex.getMessage());
+                }
+            }
+        }
+    }
+
+    private void upsertProduct(Product newProduct) {
+        // Ищем существующий товар
+        List<Product> existingProducts = productRepository.findByBarcodeAndSupplier(
+                newProduct.getBarcode(), newProduct.getSupplier());
+
+        if (!existingProducts.isEmpty()) {
+            // Обновляем существующий товар
+            Product existingProduct = existingProducts.get(0);
+            existingProduct.setProductSap(newProduct.getProductSap());
+            existingProduct.setProductName(newProduct.getProductName());
+            existingProduct.setPriceWithVat(newProduct.getPriceWithVat());
+            productRepository.save(existingProduct);
+            log.debug("Обновлен существующий товар: {}/{}",
+                    existingProduct.getSupplier().getSupplierSap(), existingProduct.getBarcode());
+        } else {
+            // Создаем новый товар
+            productRepository.save(newProduct);
+        }
     }
 
     private Product processDataRow(Row row, int supplierSapCol, int supplierNameCol, int barcodeCol,
@@ -119,6 +183,9 @@ public class ExcelProcessingService {
         if (barcode == null || barcode.trim().isEmpty()) {
             throw new IllegalArgumentException("Не указан штрихкод");
         }
+
+        supplierSap = supplierSap.trim();
+        barcode = barcode.trim();
 
         if (!isValidBarcode(barcode)) {
             throw new IllegalArgumentException("Неверный формат штрихкода: " + barcode);
