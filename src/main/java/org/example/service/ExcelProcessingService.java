@@ -46,26 +46,38 @@ public class ExcelProcessingService {
         try (Workbook workbook = WorkbookFactory.create(file.getInputStream())) {
             Sheet sheet = workbook.getSheetAt(0);
 
-            // Определяем индексы колонок с более точной логикой
-            int supplierSapCol = findColumnIndex(sheet, "сап поставщик", "sap поставщика", "сап");
-            int supplierNameCol = findColumnIndex(sheet, "наименование поставщика", "поставщик");
-            int barcodeCol = findColumnIndex(sheet, "штрих", "шк", "barcode", "штрихкод", "штрих код");
-            int productSapCol = findColumnIndex(sheet, "сап товара", "sap товара", "товар", "код товара");
-            int productNameCol = findColumnIndex(sheet, "наименование", "наименование товара", "продукт", "товар");
-            int priceCol = findColumnIndex(sheet, "цена", "пц", "price", "стоимость", "пц с ндс опт");
-
-            log.info("Detected columns - SupplierSAP: {}, SupplierName: {}, Barcode: {}, ProductSAP: {}, ProductName: {}, Price: {}",
-                    supplierSapCol, supplierNameCol, barcodeCol, productSapCol, productNameCol, priceCol);
-
             // Логируем заголовки для отладки
             Row headerRow = sheet.getRow(0);
+            List<String> headers = new ArrayList<>();
             if (headerRow != null) {
-                List<String> headers = new ArrayList<>();
                 for (int i = 0; i < headerRow.getLastCellNum(); i++) {
                     String header = getCellStringValue(headerRow.getCell(i));
                     headers.add(header != null ? header : "empty");
                 }
                 log.info("Actual headers in file: {}", headers);
+            }
+
+            // Определяем индексы колонок на основе реальных заголовков
+            int supplierSapCol = findColumnIndex(headers, "сап поставщик", "sap поставщика", "сап");
+            int supplierNameCol = findColumnIndex(headers, "наименование поставщика", "поставщик");
+            int barcodeCol = findColumnIndex(headers, "штрих", "шк", "barcode", "штрихкод", "штрих код");
+            int productSapCol = findColumnIndex(headers, "сап товара", "sap товара", "товар", "код товара");
+
+            // ВАЖНО: Для имени товара ищем более специфичные названия и исключаем поставщика
+            int productNameCol = findProductNameColumn(headers);
+            int priceCol = findColumnIndex(headers, "цена", "пц", "price", "стоимость", "пц с ндс опт");
+
+            log.info("Detected columns - SupplierSAP: {}, SupplierName: {}, Barcode: {}, ProductSAP: {}, ProductName: {}, Price: {}",
+                    supplierSapCol, supplierNameCol, barcodeCol, productSapCol, productNameCol, priceCol);
+
+            // Проверяем, что нашли правильные колонки
+            if (productNameCol == supplierNameCol) {
+                log.error("Ошибка: колонка имени товара совпадает с колонкой имени поставщика!");
+                // Пробуем найти колонку имени товара по индексу 5 (типичное расположение)
+                if (headers.size() > 5) {
+                    productNameCol = 5;
+                    log.warn("Используем колонку 5 для имени товара: {}", headers.get(5));
+                }
             }
 
             List<Product> batchProducts = new ArrayList<>();
@@ -156,7 +168,7 @@ public class ExcelProcessingService {
             response.setMessage(message);
             response.setProcessedRecords(processed);
             response.setFailedRecords(failed);
-            response.setDuplicateExamples(duplicateExamples); // Устанавливаем примеры дубликатов
+            response.setDuplicateExamples(duplicateExamples);
 
             log.info("File processing completed. Total: {}, Success: {}, Skipped duplicates in file: {}, Failed: {}, Time: {} ms",
                     processed + skipped + failed, processed, skipped, failed, (System.currentTimeMillis() - startTime));
@@ -168,6 +180,70 @@ public class ExcelProcessingService {
         }
 
         return response;
+    }
+
+    /**
+     * Специальный метод для поиска колонки с именем товара
+     */
+    private int findProductNameColumn(List<String> headers) {
+        // Сначала ищем специфичные названия для товара
+        for (int i = 0; i < headers.size(); i++) {
+            String header = headers.get(i);
+            if (header != null) {
+                String lowerHeader = header.toLowerCase();
+                // Ищем названия, которые точно относятся к товару, а не к поставщику
+                if (lowerHeader.contains("наименование товара") ||
+                        lowerHeader.contains("наименование") && !lowerHeader.contains("поставщик") ||
+                        lowerHeader.contains("продукт") ||
+                        lowerHeader.contains("товар") && !lowerHeader.contains("код")) {
+                    log.info("Найдена колонка имени товара: '{}' в позиции {}", header, i);
+                    return i;
+                }
+            }
+        }
+
+        // Если не нашли, используем типичное расположение (колонка 5)
+        if (headers.size() > 5) {
+            log.warn("Не удалось найти колонку имени товара, используем колонку 5: {}", headers.get(5));
+            return 5;
+        }
+
+        log.error("Не удалось найти колонку имени товара!");
+        return 1; // fallback
+    }
+
+    /**
+     * Улучшенный метод поиска колонок по заголовкам
+     */
+    private int findColumnIndex(List<String> headers, String... keywords) {
+        for (int i = 0; i < headers.size(); i++) {
+            String header = headers.get(i);
+            if (header != null) {
+                String lowerHeader = header.toLowerCase();
+                for (String keyword : keywords) {
+                    if (lowerHeader.contains(keyword.toLowerCase())) {
+                        log.debug("Найдена колонка '{}' по ключевому слову '{}' в позиции {}", header, keyword, i);
+                        return i;
+                    }
+                }
+            }
+        }
+
+        // Если не нашли, возвращаем дефолтные значения на основе типичной структуры
+        log.warn("Не удалось определить колонку по ключевым словам {}, используем дефолтный индекс", String.join(", ", keywords));
+        return getDefaultColumnIndex(keywords);
+    }
+
+    private int getDefaultColumnIndex(String... keywords) {
+        // Дефолтные индексы на основе типичной структуры файла
+        String firstKeyword = keywords[0].toLowerCase();
+        if (firstKeyword.contains("сап") && firstKeyword.contains("поставщик")) return 0;
+        if (firstKeyword.contains("наименование") && firstKeyword.contains("поставщик")) return 1;
+        if (firstKeyword.contains("штрих") || firstKeyword.contains("шк")) return 2;
+        if (firstKeyword.contains("сап") && !firstKeyword.contains("поставщик")) return 3;
+        if (firstKeyword.contains("наименование") && !firstKeyword.contains("поставщик")) return 5;
+        if (firstKeyword.contains("цена") || firstKeyword.contains("пц")) return 6;
+        return 0;
     }
 
     private Product processDataRow(Row row, int supplierSapCol, int supplierNameCol, int barcodeCol,
@@ -202,6 +278,7 @@ public class ExcelProcessingService {
             supplier.setSupplierName(supplierName);
             supplierRepository.save(supplier);
             supplierCache.put(supplierSap, supplier);
+            log.info("Создан поставщик: SAP={}, Name={}", supplierSap, supplierName);
         }
 
         // Создаем продукт с правильными данными
@@ -209,7 +286,7 @@ public class ExcelProcessingService {
                 .supplier(supplier)
                 .barcode(barcode)
                 .productSap(productSap)
-                .productName(productName) // Сохраняем правильное имя продукта
+                .productName(productName)
                 .priceWithVat(price)
                 .build();
 
@@ -220,40 +297,6 @@ public class ExcelProcessingService {
         }
 
         return product;
-    }
-
-    private int findColumnIndex(Sheet sheet, String... keywords) {
-        Row headerRow = sheet.getRow(0);
-        if (headerRow == null) return 0;
-
-        for (int i = 0; i < headerRow.getLastCellNum(); i++) {
-            String cellValue = getCellStringValue(headerRow.getCell(i));
-            if (cellValue != null) {
-                String lowerValue = cellValue.toLowerCase();
-                for (String keyword : keywords) {
-                    if (lowerValue.contains(keyword.toLowerCase())) {
-                        log.debug("Найдена колонка '{}' по ключевому слову '{}' в позиции {}", cellValue, keyword, i);
-                        return i;
-                    }
-                }
-            }
-        }
-
-        // Если не нашли, возвращаем дефолтные значения на основе типичной структуры
-        log.warn("Не удалось определить колонки по ключевым словам, используем дефолтные индексы");
-        return getDefaultColumnIndex(keywords);
-    }
-
-    private int getDefaultColumnIndex(String... keywords) {
-        // Дефолтные индексы на основе типичной структуры файла
-        String firstKeyword = keywords[0].toLowerCase();
-        if (firstKeyword.contains("сап") && firstKeyword.contains("поставщик")) return 0;
-        if (firstKeyword.contains("наименование") && firstKeyword.contains("поставщик")) return 1;
-        if (firstKeyword.contains("штрих") || firstKeyword.contains("шк")) return 2;
-        if (firstKeyword.contains("сап") && !firstKeyword.contains("поставщик")) return 3;
-        if (firstKeyword.contains("наименование") && !firstKeyword.contains("поставщик")) return 5; // Исправлено на 5
-        if (firstKeyword.contains("цена") || firstKeyword.contains("пц")) return 6; // Исправлено на 6
-        return 0;
     }
 
     private String getCellStringValue(Cell cell) {

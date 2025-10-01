@@ -62,10 +62,10 @@ public class PriceAnalysisService {
             // Оптимизированный поиск всех цен за один запрос
             List<Product> bestProducts = productRepository.findBestPricesByBarcodes(new ArrayList<>(barcodes));
 
-            // Логируем первые 3 найденных товара для отладки
+            // Логируем первые 5 найденных товара для отладки
             if (!bestProducts.isEmpty()) {
-                log.info("Первые 3 товара из базы данных:");
-                for (int i = 0; i < Math.min(3, bestProducts.size()); i++) {
+                log.info("Первые 5 товаров из базы данных:");
+                for (int i = 0; i < Math.min(5, bestProducts.size()); i++) {
                     Product p = bestProducts.get(i);
                     log.info("Товар {}: Штрихкод={}, Наименование={}, Поставщик={}, Цена={}",
                             i + 1, p.getBarcode(), p.getProductName(),
@@ -137,18 +137,22 @@ public class PriceAnalysisService {
     private PriceAnalysisResult createSuccessResult(String barcode, Integer quantity, Product product) {
         // Проверяем, что имя продукта не равно имени поставщика
         String actualProductName = product.getProductName();
-        if (actualProductName == null || actualProductName.equals(product.getSupplier().getSupplierName())) {
-            log.warn("Возможная проблема с именем продукта для штрихкода {}: productName='{}', supplierName='{}'",
-                    barcode, actualProductName, product.getSupplier().getSupplierName());
+        String supplierName = product.getSupplier().getSupplierName();
+
+        if (actualProductName == null || actualProductName.equals(supplierName)) {
+            log.warn("Проблема с именем продукта для штрихкода {}: productName='{}', supplierName='{}'",
+                    barcode, actualProductName, supplierName);
+            // Если имя продукта совпадает с именем поставщика, используем запасной вариант
+            actualProductName = "Наименование не указано";
         }
 
         return PriceAnalysisResult.builder()
                 .barcode(barcode)
                 .quantity(quantity)
-                .bestSupplierName(product.getSupplier().getSupplierName())
+                .bestSupplierName(supplierName)
                 .bestSupplierSap(product.getSupplier().getSupplierSap())
                 .bestPrice(product.getPriceWithVat())
-                .productName(actualProductName != null ? actualProductName : "Не указано")
+                .productName(actualProductName)
                 .requiresManualProcessing(false)
                 .build();
     }
