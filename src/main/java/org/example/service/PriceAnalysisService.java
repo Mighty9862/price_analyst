@@ -1,3 +1,4 @@
+// service/PriceAnalysisService.java
 package org.example.service;
 
 import lombok.RequiredArgsConstructor;
@@ -27,8 +28,13 @@ public class PriceAnalysisService {
             Sheet sheet = workbook.getSheetAt(0);
 
             // Определяем индексы колонок
-            int barcodeCol = findColumnIndex(sheet, "штрих", "barcode", "шк");
-            int quantityCol = findColumnIndex(sheet, "количе", "quantity", "кол-во");
+            int barcodeCol = findColumnIndex(sheet, "Штрихкод");
+            int quantityCol = findColumnIndex(sheet, "Количество");
+
+            // Проверяем, что колонки найдены
+            if (barcodeCol == -1 || quantityCol == -1) {
+                throw new IllegalArgumentException("Не найдены необходимые заголовки 'Штрихкод' или 'Количество' в файле.");
+            }
 
             log.info("Using columns - Barcode: {}, Quantity: {}", barcodeCol, quantityCol);
 
@@ -62,10 +68,10 @@ public class PriceAnalysisService {
             // Оптимизированный поиск всех цен за один запрос
             List<Product> bestProducts = productRepository.findBestPricesByBarcodes(new ArrayList<>(barcodes));
 
-            // Логируем первые 5 найденных товара для отладки
+            // Логируем первые 3 найденных товара для отладки
             if (!bestProducts.isEmpty()) {
-                log.info("Первые 5 товаров из базы данных:");
-                for (int i = 0; i < Math.min(5, bestProducts.size()); i++) {
+                log.info("Первые 3 товара из базы данных:");
+                for (int i = 0; i < Math.min(3, bestProducts.size()); i++) {
                     Product p = bestProducts.get(i);
                     log.info("Товар {}: Штрихкод={}, Наименование={}, Поставщик={}, Цена={}",
                             i + 1, p.getBarcode(), p.getProductName(),
@@ -137,22 +143,18 @@ public class PriceAnalysisService {
     private PriceAnalysisResult createSuccessResult(String barcode, Integer quantity, Product product) {
         // Проверяем, что имя продукта не равно имени поставщика
         String actualProductName = product.getProductName();
-        String supplierName = product.getSupplier().getSupplierName();
-
-        if (actualProductName == null || actualProductName.equals(supplierName)) {
-            log.warn("Проблема с именем продукта для штрихкода {}: productName='{}', supplierName='{}'",
-                    barcode, actualProductName, supplierName);
-            // Если имя продукта совпадает с именем поставщика, используем запасной вариант
-            actualProductName = "Наименование не указано";
+        if (actualProductName == null || actualProductName.equals(product.getSupplier().getSupplierName())) {
+            log.warn("Возможная проблема с именем продукта для штрихкода {}: productName='{}', supplierName='{}'",
+                    barcode, actualProductName, product.getSupplier().getSupplierName());
         }
 
         return PriceAnalysisResult.builder()
                 .barcode(barcode)
                 .quantity(quantity)
-                .bestSupplierName(supplierName)
+                .bestSupplierName(product.getSupplier().getSupplierName())
                 .bestSupplierSap(product.getSupplier().getSupplierSap())
                 .bestPrice(product.getPriceWithVat())
-                .productName(actualProductName)
+                .productName(actualProductName != null ? actualProductName : "Не указано")
                 .requiresManualProcessing(false)
                 .build();
     }
@@ -208,22 +210,17 @@ public class PriceAnalysisService {
                 .count();
     }
 
-    private int findColumnIndex(Sheet sheet, String... keywords) {
+    private int findColumnIndex(Sheet sheet, String expectedHeader) {
         Row headerRow = sheet.getRow(0);
-        if (headerRow == null) return 0;
+        if (headerRow == null) return -1;
 
         for (int i = 0; i < headerRow.getLastCellNum(); i++) {
             String cellValue = getCellStringValue(headerRow.getCell(i));
-            if (cellValue != null) {
-                String lowerValue = cellValue.toLowerCase();
-                for (String keyword : keywords) {
-                    if (lowerValue.contains(keyword)) {
-                        return i;
-                    }
-                }
+            if (cellValue != null && cellValue.trim().equalsIgnoreCase(expectedHeader.trim())) {
+                return i;
             }
         }
-        return 0;
+        return -1;
     }
 
     private String getCellStringValue(Cell cell) {

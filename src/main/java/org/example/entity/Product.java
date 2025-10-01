@@ -1,3 +1,4 @@
+// entity/Product.java
 package org.example.entity;
 
 import jakarta.persistence.*;
