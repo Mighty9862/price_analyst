@@ -28,6 +28,10 @@ public class ExcelProcessingService {
     @Transactional
     public ExcelUploadResponse processSupplierDataFile(MultipartFile file) {
         long startTime = System.currentTimeMillis();
+
+        // Список для примеров дубликатов
+        List<String> duplicateExamples = new ArrayList<>();
+
         ExcelUploadResponse response = ExcelUploadResponse.builder().build();
         List<String> errors = new ArrayList<>();
         int processed = 0;
@@ -63,6 +67,7 @@ public class ExcelProcessingService {
                 try {
                     String supplierSap = getCellStringValue(row.getCell(supplierSapCol));
                     String barcode = getCellStringValue(row.getCell(barcodeCol));
+                    String productName = getCellStringValue(row.getCell(productNameCol));
 
                     if (supplierSap == null || supplierSap.trim().isEmpty()) {
                         throw new IllegalArgumentException("Не указан SAP код поставщика");
@@ -75,10 +80,18 @@ public class ExcelProcessingService {
                     barcode = barcode.trim();
 
                     // Проверка дубликата ТОЛЬКО в текущем файле
-                    // Разрешаем одинаковые штрихкоды у разных поставщиков
                     String duplicateKey = supplierSap + "|" + barcode;
                     if (fileDuplicateCheckCache.containsKey(duplicateKey)) {
                         skipped++;
+
+                        // Сохраняем примеры дубликатов (первые 3)
+                        if (duplicateExamples.size() < 3) {
+                            String duplicateInfo = String.format("Строка %d: Поставщик %s, Штрихкод %s, Товар %s",
+                                    i + 1, supplierSap, barcode, productName != null ? productName : "N/A");
+                            duplicateExamples.add(duplicateInfo);
+                            log.info("Пример дубликата: {}", duplicateInfo);
+                        }
+
                         log.debug("Пропущен дубликат в файле: поставщик {}, штрихкод {}", supplierSap, barcode);
                         continue;
                     }
@@ -111,11 +124,21 @@ public class ExcelProcessingService {
                 productRepository.saveAll(batchProducts);
             }
 
+            // Формируем сообщение с примерами дубликатов
+            String message;
+            if (!duplicateExamples.isEmpty()) {
+                message = String.format("Обработано записей: %d, пропущено дубликатов В ФАЙЛЕ: %d, ошибок: %d. Время выполнения: %d мс. Примеры дубликатов: %s",
+                        processed, skipped, failed, (System.currentTimeMillis() - startTime), String.join("; ", duplicateExamples));
+            } else {
+                message = String.format("Обработано записей: %d, пропущено дубликатов В ФАЙЛЕ: %d, ошибок: %d. Время выполнения: %d мс",
+                        processed, skipped, failed, (System.currentTimeMillis() - startTime));
+            }
+
             response.setSuccess(true);
-            response.setMessage(String.format("Обработано записей: %d, пропущено дубликатов В ФАЙЛЕ: %d, ошибок: %d. Время выполнения: %d мс",
-                    processed, skipped, failed, (System.currentTimeMillis() - startTime)));
+            response.setMessage(message);
             response.setProcessedRecords(processed);
             response.setFailedRecords(failed);
+            response.setDuplicateExamples(duplicateExamples); // Устанавливаем примеры дубликатов
 
             log.info("File processing completed. Total: {}, Success: {}, Skipped duplicates in file: {}, Failed: {}, Time: {} ms",
                     processed + skipped + failed, processed, skipped, failed, (System.currentTimeMillis() - startTime));
@@ -167,7 +190,7 @@ public class ExcelProcessingService {
                 .supplier(supplier)
                 .barcode(barcode)
                 .productSap(productSap)
-                .productName(productName)
+                .productName(productName) // Сохраняем правильное имя продукта
                 .priceWithVat(price)
                 .build();
     }

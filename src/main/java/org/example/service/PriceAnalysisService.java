@@ -130,7 +130,7 @@ public class PriceAnalysisService {
                 .bestSupplierName(product.getSupplier().getSupplierName())
                 .bestSupplierSap(product.getSupplier().getSupplierSap())
                 .bestPrice(product.getPriceWithVat())
-                .productName(product.getProductName())
+                .productName(product.getProductName() != null ? product.getProductName() : "Не указано") // Исправляем: берем имя продукта, а не поставщика
                 .requiresManualProcessing(false)
                 .build();
     }
