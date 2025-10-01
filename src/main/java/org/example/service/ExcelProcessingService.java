@@ -46,16 +46,27 @@ public class ExcelProcessingService {
         try (Workbook workbook = WorkbookFactory.create(file.getInputStream())) {
             Sheet sheet = workbook.getSheetAt(0);
 
-            // Определяем индексы колонок
-            int supplierSapCol = findColumnIndex(sheet, "сап поставщик", "sap поставщика");
-            int supplierNameCol = findColumnIndex(sheet, "наименование поставщика");
-            int barcodeCol = findColumnIndex(sheet, "штрих", "шк", "barcode");
-            int productSapCol = findColumnIndex(sheet, "сап", "sap товара");
-            int productNameCol = findColumnIndex(sheet, "наименование", "товар");
-            int priceCol = findColumnIndex(sheet, "цена", "пц", "price");
+            // Определяем индексы колонок с более точной логикой
+            int supplierSapCol = findColumnIndex(sheet, "сап поставщик", "sap поставщика", "сап");
+            int supplierNameCol = findColumnIndex(sheet, "наименование поставщика", "поставщик");
+            int barcodeCol = findColumnIndex(sheet, "штрих", "шк", "barcode", "штрихкод", "штрих код");
+            int productSapCol = findColumnIndex(sheet, "сап товара", "sap товара", "товар", "код товара");
+            int productNameCol = findColumnIndex(sheet, "наименование", "наименование товара", "продукт", "товар");
+            int priceCol = findColumnIndex(sheet, "цена", "пц", "price", "стоимость", "пц с ндс опт");
 
             log.info("Detected columns - SupplierSAP: {}, SupplierName: {}, Barcode: {}, ProductSAP: {}, ProductName: {}, Price: {}",
                     supplierSapCol, supplierNameCol, barcodeCol, productSapCol, productNameCol, priceCol);
+
+            // Логируем заголовки для отладки
+            Row headerRow = sheet.getRow(0);
+            if (headerRow != null) {
+                List<String> headers = new ArrayList<>();
+                for (int i = 0; i < headerRow.getLastCellNum(); i++) {
+                    String header = getCellStringValue(headerRow.getCell(i));
+                    headers.add(header != null ? header : "empty");
+                }
+                log.info("Actual headers in file: {}", headers);
+            }
 
             List<Product> batchProducts = new ArrayList<>();
             int batchSize = 1000;
@@ -102,6 +113,13 @@ public class ExcelProcessingService {
                     if (product != null) {
                         batchProducts.add(product);
                         processed++;
+
+                        // Логируем первые 3 записи для отладки
+                        if (processed <= 3) {
+                            log.info("Пример сохраненной записи {}: Поставщик={}, Штрихкод={}, Товар={}, Цена={}",
+                                    processed, product.getSupplier().getSupplierSap(),
+                                    product.getBarcode(), product.getProductName(), product.getPriceWithVat());
+                        }
 
                         // Пакетное сохранение
                         if (batchProducts.size() >= batchSize) {
@@ -186,13 +204,22 @@ public class ExcelProcessingService {
             supplierCache.put(supplierSap, supplier);
         }
 
-        return Product.builder()
+        // Создаем продукт с правильными данными
+        Product product = Product.builder()
                 .supplier(supplier)
                 .barcode(barcode)
                 .productSap(productSap)
                 .productName(productName) // Сохраняем правильное имя продукта
                 .priceWithVat(price)
                 .build();
+
+        // Логируем для отладки
+        if (product.getProductName() == null || product.getProductName().equals(supplierName)) {
+            log.warn("Возможная проблема с именем продукта: supplierName={}, productName={}",
+                    supplierName, productName);
+        }
+
+        return product;
     }
 
     private int findColumnIndex(Sheet sheet, String... keywords) {
@@ -204,12 +231,28 @@ public class ExcelProcessingService {
             if (cellValue != null) {
                 String lowerValue = cellValue.toLowerCase();
                 for (String keyword : keywords) {
-                    if (lowerValue.contains(keyword)) {
+                    if (lowerValue.contains(keyword.toLowerCase())) {
+                        log.debug("Найдена колонка '{}' по ключевому слову '{}' в позиции {}", cellValue, keyword, i);
                         return i;
                     }
                 }
             }
         }
+
+        // Если не нашли, возвращаем дефолтные значения на основе типичной структуры
+        log.warn("Не удалось определить колонки по ключевым словам, используем дефолтные индексы");
+        return getDefaultColumnIndex(keywords);
+    }
+
+    private int getDefaultColumnIndex(String... keywords) {
+        // Дефолтные индексы на основе типичной структуры файла
+        String firstKeyword = keywords[0].toLowerCase();
+        if (firstKeyword.contains("сап") && firstKeyword.contains("поставщик")) return 0;
+        if (firstKeyword.contains("наименование") && firstKeyword.contains("поставщик")) return 1;
+        if (firstKeyword.contains("штрих") || firstKeyword.contains("шк")) return 2;
+        if (firstKeyword.contains("сап") && !firstKeyword.contains("поставщик")) return 3;
+        if (firstKeyword.contains("наименование") && !firstKeyword.contains("поставщик")) return 5; // Исправлено на 5
+        if (firstKeyword.contains("цена") || firstKeyword.contains("пц")) return 6; // Исправлено на 6
         return 0;
     }
 
