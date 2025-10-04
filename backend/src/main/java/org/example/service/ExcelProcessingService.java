@@ -1,4 +1,3 @@
-// service/ExcelProcessingService.java
 package org.example.service;
 
 import lombok.RequiredArgsConstructor;
@@ -51,19 +50,21 @@ public class ExcelProcessingService {
             int supplierSapCol = findColumnIndex(sheet, "Сап Поставщик");
             int supplierNameCol = findColumnIndex(sheet, "Наименование поставщика");
             int barcodeCol = findColumnIndex(sheet, "Штрих код");
-            int externalProductCodeCol = findColumnIndex(sheet, "Товар"); // Не используется в текущей логике, но для полноты
+            int externalProductCodeCol = findColumnIndex(sheet, "Товар");
             int productSapCol = findColumnIndex(sheet, "Сап");
             int productNameCol = findColumnIndex(sheet, "Наименование");
             int priceCol = findColumnIndex(sheet, "ПЦ с НДС опт");
+            int quantityCol = findColumnIndex(sheet, "Количество"); // Новая колонка
 
             // Проверяем, что все колонки найдены
             if (supplierSapCol == -1 || supplierNameCol == -1 || barcodeCol == -1 ||
-                    productSapCol == -1 || productNameCol == -1 || priceCol == -1) {
+                    externalProductCodeCol == -1 || productSapCol == -1 || productNameCol == -1 ||
+                    priceCol == -1 || quantityCol == -1) {
                 throw new IllegalArgumentException("Не найдены все необходимые заголовки в файле. Проверьте формат.");
             }
 
-            log.info("Detected columns - SupplierSAP: {}, SupplierName: {}, Barcode: {}, ProductSAP: {}, ProductName: {}, Price: {}",
-                    supplierSapCol, supplierNameCol, barcodeCol, productSapCol, productNameCol, priceCol);
+            log.info("Detected columns - SupplierSAP: {}, SupplierName: {}, Barcode: {}, ExternalCode: {}, ProductSAP: {}, ProductName: {}, Price: {}, Quantity: {}",
+                    supplierSapCol, supplierNameCol, barcodeCol, externalProductCodeCol, productSapCol, productNameCol, priceCol, quantityCol);
 
             // Логируем заголовки для отладки
             Row headerRow = sheet.getRow(0);
@@ -117,16 +118,16 @@ public class ExcelProcessingService {
                     fileDuplicateCheckCache.put(duplicateKey, true);
 
                     Product product = processDataRow(row, supplierSapCol, supplierNameCol, barcodeCol,
-                            productSapCol, productNameCol, priceCol, supplierCache);
+                            externalProductCodeCol, productSapCol, productNameCol, priceCol, quantityCol, supplierCache);
                     if (product != null) {
                         batchProducts.add(product);
                         processed++;
 
                         // Логируем первые 3 записи для отладки
                         if (processed <= 3) {
-                            log.info("Пример сохраненной записи {}: Поставщик={}, Штрихкод={}, Товар={}, Цена={}",
+                            log.info("Пример сохраненной записи {}: Поставщик={}, Штрихкод={}, Товар={}, Цена={}, Количество={}",
                                     processed, product.getSupplier().getSupplierSap(),
-                                    product.getBarcode(), product.getProductName(), product.getPriceWithVat());
+                                    product.getBarcode(), product.getProductName(), product.getPriceWithVat(), product.getQuantity());
                         }
 
                         // Пакетное сохранение
@@ -179,14 +180,16 @@ public class ExcelProcessingService {
     }
 
     private Product processDataRow(Row row, int supplierSapCol, int supplierNameCol, int barcodeCol,
-                                   int productSapCol, int productNameCol, int priceCol,
-                                   Map<String, Supplier> supplierCache) {
+                                   int externalProductCodeCol, int productSapCol, int productNameCol, int priceCol,
+                                   int quantityCol, Map<String, Supplier> supplierCache) {
         String supplierSap = getCellStringValue(row.getCell(supplierSapCol));
         String supplierName = getCellStringValue(row.getCell(supplierNameCol));
         String barcode = getCellStringValue(row.getCell(barcodeCol));
+        String externalCode = getCellStringValue(row.getCell(externalProductCodeCol));
         String productSap = getCellStringValue(row.getCell(productSapCol));
         String productName = getCellStringValue(row.getCell(productNameCol));
         Double price = getCellNumericValue(row.getCell(priceCol));
+        Integer quantity = getCellIntegerValue(row.getCell(quantityCol));
 
         if (supplierSap == null || supplierSap.trim().isEmpty()) {
             throw new IllegalArgumentException("Не указан SAP код поставщика");
@@ -216,9 +219,11 @@ public class ExcelProcessingService {
         Product product = Product.builder()
                 .supplier(supplier)
                 .barcode(barcode)
+                .externalCode(externalCode)
                 .productSap(productSap)
                 .productName(productName) // Сохраняем правильное имя продукта
                 .priceWithVat(price)
+                .quantity(quantity != null ? quantity : 0)
                 .build();
 
         // Логируем для отладки
@@ -270,6 +275,22 @@ public class ExcelProcessingService {
                 }
             }
             default -> 0.0;
+        };
+    }
+
+    private Integer getCellIntegerValue(Cell cell) {
+        if (cell == null) return 0;
+
+        return switch (cell.getCellType()) {
+            case NUMERIC -> (int) cell.getNumericCellValue();
+            case STRING -> {
+                try {
+                    yield Integer.parseInt(cell.getStringCellValue());
+                } catch (NumberFormatException e) {
+                    yield 0;
+                }
+            }
+            default -> 0;
         };
     }
 

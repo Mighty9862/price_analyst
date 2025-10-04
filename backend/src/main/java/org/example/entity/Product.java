@@ -1,4 +1,3 @@
-// entity/Product.java
 package org.example.entity;
 
 import jakarta.persistence.*;
@@ -29,9 +28,15 @@ public class Product {
     @Column(nullable = false)
     private String barcode;
 
+    @Column(name = "external_code")
+    private String externalCode; // Новая колонка "Товар"
+
     private String productSap;
     private String productName;
 
     @Column(name = "price_with_vat")
     private Double priceWithVat;
+
+    @Column(name = "quantity")
+    private Integer quantity; // Новая колонка "Количество"
 }

@@ -1,4 +1,3 @@
-// dto/PriceAnalysisResult.java
 package org.example.dto;
 
 import lombok.AllArgsConstructor;
@@ -18,4 +17,7 @@ public class PriceAnalysisResult {
     private Double bestPrice;
     private String productName;
     private Boolean requiresManualProcessing;
+
+    private Integer supplierQuantity; // Новое поле: количество у поставщика
+    private Double totalPrice; // Новое поле: общая сумма (quantity * bestPrice)
 }
