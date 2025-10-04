@@ -87,7 +87,7 @@ public class DataController {
 
             // Заголовки
             Row headerRow = sheet.createRow(0);
-            String[] headers = {"Сап Поставщик", "Наименование поставщика", "Штрих код", "Товар", "Сап", "Наименование", "ПЦ с НДС опт", "Количество"};
+            String[] headers = {"Наименование поставщика", "Штрих код", "Товар", "Наименование", "ПЦ с НДС опт", "Количество"};
             for (int i = 0; i < headers.length; i++) {
                 headerRow.createCell(i).setCellValue(headers[i]);
             }
@@ -97,14 +97,12 @@ public class DataController {
             int rowNum = 1;
             for (Product p : allProducts) {
                 Row row = sheet.createRow(rowNum++);
-                row.createCell(0).setCellValue(p.getSupplier().getSupplierSap());
-                row.createCell(1).setCellValue(p.getSupplier().getSupplierName());
-                row.createCell(2).setCellValue(p.getBarcode());
-                row.createCell(3).setCellValue(p.getExternalCode() != null ? p.getExternalCode() : "");
-                row.createCell(4).setCellValue(p.getProductSap() != null ? p.getProductSap() : "");
-                row.createCell(5).setCellValue(p.getProductName() != null ? p.getProductName() : "");
-                row.createCell(6).setCellValue(p.getPriceWithVat() != null ? p.getPriceWithVat() : 0.0);
-                row.createCell(7).setCellValue(p.getQuantity() != null ? p.getQuantity() : 0);
+                row.createCell(0).setCellValue(p.getSupplier().getSupplierName());
+                row.createCell(1).setCellValue(p.getBarcode());
+                row.createCell(2).setCellValue(p.getExternalCode() != null ? p.getExternalCode() : "");
+                row.createCell(3).setCellValue(p.getProductName() != null ? p.getProductName() : "");
+                row.createCell(4).setCellValue(p.getPriceWithVat() != null ? p.getPriceWithVat() : 0.0);
+                row.createCell(5).setCellValue(p.getQuantity() != null ? p.getQuantity() : 0);
             }
 
             // Авторазмер колонок
@@ -127,7 +125,7 @@ public class DataController {
 
             // Заголовки
             Row headerRow = sheet.createRow(0);
-            String[] headers = {"Штрихкод", "Количество", "Лучший поставщик", "SAP поставщика", "Лучшая цена", "Наименование товара", "Требует ручной обработки", "Количество у поставщика", "Общая сумма"};
+            String[] headers = {"Штрихкод", "Количество", "Наименование товара", "Требует ручной обработки", "Общая сумма", "Сообщение"};
             for (int i = 0; i < headers.length; i++) {
                 headerRow.createCell(i).setCellValue(headers[i]);
             }
@@ -138,25 +136,35 @@ public class DataController {
                 Row row = sheet.createRow(rowNum++);
                 row.createCell(0).setCellValue(result.getBarcode() != null ? result.getBarcode() : "");
                 row.createCell(1).setCellValue(result.getQuantity() != null ? result.getQuantity() : 0);
-                row.createCell(2).setCellValue(result.getBestSupplierName() != null ? result.getBestSupplierName() : "");
-                row.createCell(3).setCellValue(result.getBestSupplierSap() != null ? result.getBestSupplierSap() : "");
-                if (result.getBestPrice() != null) {
-                    row.createCell(4).setCellValue(result.getBestPrice()); // Без округления
+                row.createCell(2).setCellValue(result.getProductName() != null ? result.getProductName() : "");
+                row.createCell(3).setCellValue(result.getRequiresManualProcessing() != null && result.getRequiresManualProcessing() ? "Да" : "Нет");
+                if (result.getTotalPrice() != null) {
+                    row.createCell(4).setCellValue(result.getTotalPrice()); // Без округления
                 } else {
                     row.createCell(4).setCellValue("");
                 }
-                row.createCell(5).setCellValue(result.getProductName() != null ? result.getProductName() : "");
-                row.createCell(6).setCellValue(result.getRequiresManualProcessing() != null && result.getRequiresManualProcessing() ? "Да" : "Нет");
-                row.createCell(7).setCellValue(result.getSupplierQuantity() != null ? result.getSupplierQuantity() : 0);
-                if (result.getTotalPrice() != null) {
-                    row.createCell(8).setCellValue(result.getTotalPrice()); // Без округления
-                } else {
-                    row.createCell(8).setCellValue("");
+                row.createCell(5).setCellValue(result.getMessage() != null ? result.getMessage() : "");
+
+                // Если есть несколько поставщиков, добавляем подстроки или сериализуем в ячейку
+                if (result.getBestSuppliers() != null && !result.getBestSuppliers().isEmpty()) {
+                    StringBuilder suppliersInfo = new StringBuilder();
+                    for (PriceAnalysisResult.SupplierDetail detail : result.getBestSuppliers()) {
+                        suppliersInfo.append("Поставщик: ").append(detail.getSupplierName())
+                                .append(", Цена: ").append(detail.getPrice())
+                                .append(", Взято: ").append(detail.getQuantityTaken())
+                                .append(", У поставщика: ").append(detail.getSupplierQuantity())
+                                .append("\n");
+                    }
+                    // Добавляем в отдельную колонку "Поставщики"
+                    if (rowNum == 2) { // Добавляем заголовок если первый раз
+                        headerRow.createCell(6).setCellValue("Поставщики");
+                    }
+                    row.createCell(6).setCellValue(suppliersInfo.toString());
                 }
             }
 
             // Авторазмер колонок
-            for (int i = 0; i < headers.length; i++) {
+            for (int i = 0; i < sheet.getRow(0).getLastCellNum(); i++) {
                 sheet.autoSizeColumn(i);
             }
 

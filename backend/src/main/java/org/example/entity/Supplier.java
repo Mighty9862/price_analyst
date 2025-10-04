@@ -1,4 +1,3 @@
-// entity/Supplier.java
 package org.example.entity;
 
 import jakarta.persistence.*;
@@ -12,9 +11,6 @@ import lombok.*;
 @Builder
 public class Supplier {
     @Id
-    @Column(name = "supplier_sap")
-    private String supplierSap;
-
-    @Column(nullable = false)
+    @Column(name = "supplier_name")
     private String supplierName;
 }

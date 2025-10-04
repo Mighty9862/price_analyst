@@ -93,18 +93,51 @@ public class PriceAnalysisService {
                         // Товар не найден в базе
                         results.add(createManualProcessingResult(rowData.barcode, rowData.quantity, "Товар не найден в базе"));
                     } else {
-                        // Фильтруем поставщиков с достаточным количеством
-                        List<Product> availableProducts = products.stream()
-                                .filter(p -> p.getQuantity() != null && p.getQuantity() >= rowData.quantity)
+                        // Сортируем по цене ascending
+                        List<Product> sortedProducts = products.stream()
+                                .sorted(Comparator.comparing(Product::getPriceWithVat))
                                 .toList();
 
-                        if (availableProducts.isEmpty()) {
-                            results.add(createManualProcessingResult(rowData.barcode, rowData.quantity, "Нет поставщиков с достаточным количеством"));
-                        } else {
-                            // Выбираем лучшую цену среди доступных
-                            Product bestProduct = findBestPriceProduct(availableProducts);
-                            results.add(createSuccessResult(rowData.barcode, rowData.quantity, bestProduct));
+                        // Жадно набираем количество от самых дешевых
+                        List<PriceAnalysisResult.SupplierDetail> supplierDetails = new ArrayList<>();
+                        int remainingQuantity = rowData.quantity;
+                        double totalPrice = 0.0;
+                        String productName = sortedProducts.get(0).getProductName(); // Берем имя от первого (они должны быть одинаковыми)
+                        boolean enoughQuantity = true;
+
+                        for (Product p : sortedProducts) {
+                            if (remainingQuantity <= 0) break;
+
+                            if (p.getQuantity() == null || p.getQuantity() <= 0) continue;
+
+                            int take = Math.min(remainingQuantity, p.getQuantity());
+                            supplierDetails.add(PriceAnalysisResult.SupplierDetail.builder()
+                                    .supplierName(p.getSupplier().getSupplierName())
+                                    .price(p.getPriceWithVat())
+                                    .quantityTaken(take)
+                                    .supplierQuantity(p.getQuantity())
+                                    .build());
+
+                            totalPrice += take * p.getPriceWithVat();
+                            remainingQuantity -= take;
                         }
+
+                        if (remainingQuantity > 0) {
+                            // Не набрали, но выводим что есть
+                            enoughQuantity = false;
+                        }
+
+                        PriceAnalysisResult result = PriceAnalysisResult.builder()
+                                .barcode(rowData.barcode)
+                                .quantity(rowData.quantity)
+                                .productName(productName != null ? productName : "Не указано")
+                                .bestSuppliers(supplierDetails)
+                                .totalPrice(totalPrice)
+                                .requiresManualProcessing(!enoughQuantity)
+                                .message(enoughQuantity ? null : "Недостаточно количества на складе. Доступно только " + (rowData.quantity - remainingQuantity) + " из " + rowData.quantity)
+                                .build();
+
+                        results.add(result);
                     }
                 } catch (Exception e) {
                     log.warn("Ошибка обработки строки {}: {}", rowData.rowNumber + 1, e.getMessage());
@@ -128,41 +161,6 @@ public class PriceAnalysisService {
     }
 
     /**
-     * Находит товар с лучшей ценой из списка товаров от разных поставщиков
-     */
-    private Product findBestPriceProduct(List<Product> products) {
-        return products.stream()
-                .min(Comparator.comparing(Product::getPriceWithVat))
-                .orElse(products.get(0));
-    }
-
-    /**
-     * Создает результат для успешного анализа
-     */
-    private PriceAnalysisResult createSuccessResult(String barcode, Integer quantity, Product product) {
-        // Проверяем, что имя продукта не равно имени поставщика
-        String actualProductName = product.getProductName();
-        if (actualProductName == null || actualProductName.equals(product.getSupplier().getSupplierName())) {
-            log.warn("Возможная проблема с именем продукта для штрихкода {}: productName='{}', supplierName='{}'",
-                    barcode, actualProductName, product.getSupplier().getSupplierName());
-        }
-
-        Double totalPrice = quantity * product.getPriceWithVat(); // Расчет общей суммы
-
-        return PriceAnalysisResult.builder()
-                .barcode(barcode)
-                .quantity(quantity)
-                .bestSupplierName(product.getSupplier().getSupplierName())
-                .bestSupplierSap(product.getSupplier().getSupplierSap())
-                .bestPrice(product.getPriceWithVat())
-                .productName(actualProductName != null ? actualProductName : "Не указано")
-                .requiresManualProcessing(false)
-                .supplierQuantity(product.getQuantity()) // Количество у поставщика
-                .totalPrice(totalPrice) // Общая сумма
-                .build();
-    }
-
-    /**
      * Создает результат для ручной обработки
      */
     private PriceAnalysisResult createManualProcessingResult(String barcode, Integer quantity, String reason) {
@@ -171,8 +169,9 @@ public class PriceAnalysisService {
                 .quantity(quantity)
                 .requiresManualProcessing(true)
                 .productName(reason)
-                .supplierQuantity(null) // Нет данных
-                .totalPrice(null) // Нет данных
+                .bestSuppliers(Collections.emptyList())
+                .totalPrice(null)
+                .message(null)
                 .build();
     }
 
@@ -185,8 +184,9 @@ public class PriceAnalysisService {
                 .quantity(quantity)
                 .requiresManualProcessing(true)
                 .productName("Ошибка обработки: " + e.getMessage())
-                .supplierQuantity(null) // Нет данных
-                .totalPrice(null) // Нет данных
+                .bestSuppliers(Collections.emptyList())
+                .totalPrice(null)
+                .message(null)
                 .build();
     }
 

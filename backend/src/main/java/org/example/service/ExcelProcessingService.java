@@ -40,31 +40,29 @@ public class ExcelProcessingService {
 
         // Кэш поставщиков для оптимизации
         Map<String, Supplier> supplierCache = new HashMap<>();
-        // Кэш для проверки дубликатов ТОЛЬКО В ФАЙЛЕ (supplierSap + barcode)
+        // Кэш для проверки дубликатов ТОЛЬКО В ФАЙЛЕ (supplierName + productName)
         Map<String, Boolean> fileDuplicateCheckCache = new HashMap<>();
 
         try (Workbook workbook = WorkbookFactory.create(file.getInputStream())) {
             Sheet sheet = workbook.getSheetAt(0);
 
             // Определяем индексы колонок по фиксированным заголовкам
-            int supplierSapCol = findColumnIndex(sheet, "Сап Поставщик");
             int supplierNameCol = findColumnIndex(sheet, "Наименование поставщика");
             int barcodeCol = findColumnIndex(sheet, "Штрих код");
             int externalProductCodeCol = findColumnIndex(sheet, "Товар");
-            int productSapCol = findColumnIndex(sheet, "Сап");
             int productNameCol = findColumnIndex(sheet, "Наименование");
             int priceCol = findColumnIndex(sheet, "ПЦ с НДС опт");
-            int quantityCol = findColumnIndex(sheet, "Количество"); // Новая колонка
+            int quantityCol = findColumnIndex(sheet, "Количество");
 
             // Проверяем, что все колонки найдены
-            if (supplierSapCol == -1 || supplierNameCol == -1 || barcodeCol == -1 ||
-                    externalProductCodeCol == -1 || productSapCol == -1 || productNameCol == -1 ||
+            if (supplierNameCol == -1 || barcodeCol == -1 ||
+                    externalProductCodeCol == -1 || productNameCol == -1 ||
                     priceCol == -1 || quantityCol == -1) {
                 throw new IllegalArgumentException("Не найдены все необходимые заголовки в файле. Проверьте формат.");
             }
 
-            log.info("Detected columns - SupplierSAP: {}, SupplierName: {}, Barcode: {}, ExternalCode: {}, ProductSAP: {}, ProductName: {}, Price: {}, Quantity: {}",
-                    supplierSapCol, supplierNameCol, barcodeCol, externalProductCodeCol, productSapCol, productNameCol, priceCol, quantityCol);
+            log.info("Detected columns - SupplierName: {}, Barcode: {}, ExternalCode: {}, ProductName: {}, Price: {}, Quantity: {}",
+                    supplierNameCol, barcodeCol, externalProductCodeCol, productNameCol, priceCol, quantityCol);
 
             // Логируем заголовки для отладки
             Row headerRow = sheet.getRow(0);
@@ -85,40 +83,48 @@ public class ExcelProcessingService {
                 if (row == null) continue;
 
                 try {
-                    String supplierSap = getCellStringValue(row.getCell(supplierSapCol));
+                    String supplierName = getCellStringValue(row.getCell(supplierNameCol));
                     String barcode = getCellStringValue(row.getCell(barcodeCol));
                     String productName = getCellStringValue(row.getCell(productNameCol));
 
-                    if (supplierSap == null || supplierSap.trim().isEmpty()) {
-                        throw new IllegalArgumentException("Не указан SAP код поставщика");
+                    if (supplierName == null || supplierName.trim().isEmpty()) {
+                        throw new IllegalArgumentException("Не указано наименование поставщика");
                     }
                     if (barcode == null || barcode.trim().isEmpty()) {
                         throw new IllegalArgumentException("Не указан штрихкод");
                     }
 
-                    supplierSap = supplierSap.trim();
+                    supplierName = supplierName.trim();
                     barcode = barcode.trim();
-
-                    // Проверка дубликата ТОЛЬКО в текущем файле
-                    String duplicateKey = supplierSap + "|" + barcode;
-                    if (fileDuplicateCheckCache.containsKey(duplicateKey)) {
-                        skipped++;
-
-                        // Сохраняем примеры дубликатов (первые 3)
-                        if (duplicateExamples.size() < 3) {
-                            String duplicateInfo = String.format("Строка %d: Поставщик %s, Штрихкод %s, Товар %s",
-                                    i + 1, supplierSap, barcode, productName != null ? productName : "N/A");
-                            duplicateExamples.add(duplicateInfo);
-                            log.info("Пример дубликата: {}", duplicateInfo);
-                        }
-
-                        log.debug("Пропущен дубликат в файле: поставщик {}, штрихкод {}", supplierSap, barcode);
-                        continue;
+                    if (productName != null) {
+                        productName = productName.trim();
                     }
-                    fileDuplicateCheckCache.put(duplicateKey, true);
 
-                    Product product = processDataRow(row, supplierSapCol, supplierNameCol, barcodeCol,
-                            externalProductCodeCol, productSapCol, productNameCol, priceCol, quantityCol, supplierCache);
+                    // Проверка дубликата ТОЛЬКО в текущем файле (supplierName + productName)
+                    if (productName == null || productName.isEmpty()) {
+                        // Если имя товара пустое, не проверяем на дубликат
+                        log.debug("Имя товара пустое для поставщика {}, штрихкода {}, пропускаем проверку дубликатов", supplierName, barcode);
+                    } else {
+                        String duplicateKey = supplierName + "|" + productName;
+                        if (fileDuplicateCheckCache.containsKey(duplicateKey)) {
+                            skipped++;
+
+                            // Сохраняем примеры дубликатов (первые 3)
+                            if (duplicateExamples.size() < 3) {
+                                String duplicateInfo = String.format("Строка %d: Поставщик %s, Товар %s, Штрихкод %s",
+                                        i + 1, supplierName, productName, barcode != null ? barcode : "N/A");
+                                duplicateExamples.add(duplicateInfo);
+                                log.info("Пример дубликата: {}", duplicateInfo);
+                            }
+
+                            log.debug("Пропущен дубликат в файле: поставщик {}, товар {}", supplierName, productName);
+                            continue;
+                        }
+                        fileDuplicateCheckCache.put(duplicateKey, true);
+                    }
+
+                    Product product = processDataRow(row, supplierNameCol, barcodeCol,
+                            externalProductCodeCol, productNameCol, priceCol, quantityCol, supplierCache);
                     if (product != null) {
                         batchProducts.add(product);
                         processed++;
@@ -126,7 +132,7 @@ public class ExcelProcessingService {
                         // Логируем первые 3 записи для отладки
                         if (processed <= 3) {
                             log.info("Пример сохраненной записи {}: Поставщик={}, Штрихкод={}, Товар={}, Цена={}, Количество={}",
-                                    processed, product.getSupplier().getSupplierSap(),
+                                    processed, product.getSupplier().getSupplierName(),
                                     product.getBarcode(), product.getProductName(), product.getPriceWithVat(), product.getQuantity());
                         }
 
@@ -179,26 +185,24 @@ public class ExcelProcessingService {
         return response;
     }
 
-    private Product processDataRow(Row row, int supplierSapCol, int supplierNameCol, int barcodeCol,
-                                   int externalProductCodeCol, int productSapCol, int productNameCol, int priceCol,
+    private Product processDataRow(Row row, int supplierNameCol, int barcodeCol,
+                                   int externalProductCodeCol, int productNameCol, int priceCol,
                                    int quantityCol, Map<String, Supplier> supplierCache) {
-        String supplierSap = getCellStringValue(row.getCell(supplierSapCol));
         String supplierName = getCellStringValue(row.getCell(supplierNameCol));
         String barcode = getCellStringValue(row.getCell(barcodeCol));
         String externalCode = getCellStringValue(row.getCell(externalProductCodeCol));
-        String productSap = getCellStringValue(row.getCell(productSapCol));
         String productName = getCellStringValue(row.getCell(productNameCol));
         Double price = getCellNumericValue(row.getCell(priceCol));
         Integer quantity = getCellIntegerValue(row.getCell(quantityCol));
 
-        if (supplierSap == null || supplierSap.trim().isEmpty()) {
-            throw new IllegalArgumentException("Не указан SAP код поставщика");
+        if (supplierName == null || supplierName.trim().isEmpty()) {
+            throw new IllegalArgumentException("Не указано наименование поставщика");
         }
         if (barcode == null || barcode.trim().isEmpty()) {
             throw new IllegalArgumentException("Не указан штрихкод");
         }
 
-        supplierSap = supplierSap.trim();
+        supplierName = supplierName.trim();
         barcode = barcode.trim();
 
         if (!isValidBarcode(barcode)) {
@@ -206,13 +210,12 @@ public class ExcelProcessingService {
         }
 
         // Используем кэш поставщиков для оптимизации
-        Supplier supplier = supplierCache.get(supplierSap);
+        Supplier supplier = supplierCache.get(supplierName);
         if (supplier == null) {
-            supplier = supplierRepository.findById(supplierSap)
-                    .orElse(Supplier.builder().supplierSap(supplierSap).build());
-            supplier.setSupplierName(supplierName);
+            supplier = supplierRepository.findById(supplierName)
+                    .orElse(Supplier.builder().supplierName(supplierName).build());
             supplierRepository.save(supplier);
-            supplierCache.put(supplierSap, supplier);
+            supplierCache.put(supplierName, supplier);
         }
 
         // Создаем продукт с правильными данными
@@ -220,7 +223,6 @@ public class ExcelProcessingService {
                 .supplier(supplier)
                 .barcode(barcode)
                 .externalCode(externalCode)
-                .productSap(productSap)
                 .productName(productName) // Сохраняем правильное имя продукта
                 .priceWithVat(price)
                 .quantity(quantity != null ? quantity : 0)

@@ -1,4 +1,3 @@
-// repository/SupplierRepository.java
 package org.example.repository;
 
 import org.example.entity.Supplier;

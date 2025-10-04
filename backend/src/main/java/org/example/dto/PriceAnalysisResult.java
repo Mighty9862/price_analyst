@@ -5,6 +5,8 @@ import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
+import java.util.List;
+
 @Data
 @Builder
 @NoArgsConstructor
@@ -12,12 +14,20 @@ import lombok.NoArgsConstructor;
 public class PriceAnalysisResult {
     private String barcode;
     private Integer quantity;
-    private String bestSupplierName;
-    private String bestSupplierSap;
-    private Double bestPrice;
     private String productName;
     private Boolean requiresManualProcessing;
+    private List<SupplierDetail> bestSuppliers; // Новый список для нескольких поставщиков
+    private Double totalPrice; // Общая сумма
+    private String message; // Дополнительное сообщение, если не хватает количества
 
-    private Integer supplierQuantity; // Новое поле: количество у поставщика
-    private Double totalPrice; // Новое поле: общая сумма (quantity * bestPrice)
+    @Data
+    @Builder
+    @NoArgsConstructor
+    @AllArgsConstructor
+    public static class SupplierDetail {
+        private String supplierName;
+        private Double price;
+        private Integer quantityTaken; // Сколько берем от этого поставщика
+        private Integer supplierQuantity; // Сколько всего у поставщика
+    }
 }
