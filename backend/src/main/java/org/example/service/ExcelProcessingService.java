@@ -16,6 +16,8 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
+import java.util.Objects;
 
 @Slf4j
 @Service
@@ -34,7 +36,9 @@ public class ExcelProcessingService {
 
         ExcelUploadResponse response = ExcelUploadResponse.builder().build();
         List<String> errors = new ArrayList<>();
-        int processed = 0;
+        int newRecords = 0;
+        int updatedRecords = 0;
+        int unchangedRecords = 0;
         int failed = 0;
         int skipped = 0;
 
@@ -123,25 +127,72 @@ public class ExcelProcessingService {
                         fileDuplicateCheckCache.put(duplicateKey, true);
                     }
 
-                    Product product = processDataRow(row, supplierNameCol, barcodeCol,
-                            externalProductCodeCol, productNameCol, priceCol, quantityCol, supplierCache);
-                    if (product != null) {
-                        batchProducts.add(product);
-                        processed++;
+                    // Получаем данные из строки
+                    String externalCode = getCellStringValue(row.getCell(externalProductCodeCol));
+                    Double price = getCellNumericValue(row.getCell(priceCol));
+                    Integer quantity = getCellIntegerValue(row.getCell(quantityCol));
 
-                        // Логируем первые 3 записи для отладки
-                        if (processed <= 3) {
-                            log.info("Пример сохраненной записи {}: Поставщик={}, Штрихкод={}, Товар={}, Цена={}, Количество={}",
-                                    processed, product.getSupplier().getSupplierName(),
-                                    product.getBarcode(), product.getProductName(), product.getPriceWithVat(), product.getQuantity());
-                        }
+                    // Используем кэш поставщиков для оптимизации
+                    Supplier supplier = supplierCache.get(supplierName);
+                    if (supplier == null) {
+                        supplier = supplierRepository.findById(supplierName)
+                                .orElse(Supplier.builder().supplierName(supplierName).build());
+                        supplierRepository.save(supplier);
+                        supplierCache.put(supplierName, supplier);
+                    }
 
-                        // Пакетное сохранение
-                        if (batchProducts.size() >= batchSize) {
-                            productRepository.saveAll(batchProducts);
-                            batchProducts.clear();
-                            log.info("Processed {} records...", processed);
+                    // Проверяем существование продукта в БД по supplierName и barcode
+                    Optional<Product> existingProduct = productRepository.findBySupplier_SupplierNameAndBarcode(supplierName, barcode);
+
+                    if (existingProduct.isPresent()) {
+                        Product existing = existingProduct.get();
+                        // Проверяем, изменились ли данные
+                        boolean changed = !Objects.equals(existing.getExternalCode(), externalCode) ||
+                                !Objects.equals(existing.getProductName(), productName) ||
+                                !Objects.equals(existing.getPriceWithVat(), price) ||
+                                !Objects.equals(existing.getQuantity(), quantity != null ? quantity : 0);
+
+                        if (changed) {
+                            // Обновляем, если изменились
+                            existing.setExternalCode(externalCode);
+                            existing.setProductName(productName);
+                            existing.setPriceWithVat(price);
+                            existing.setQuantity(quantity != null ? quantity : 0);
+                            batchProducts.add(existing);
+                            updatedRecords++;
+                            log.debug("Обновлен существующий продукт: поставщик {}, штрихкод {}", supplierName, barcode);
+                        } else {
+                            // Без изменений
+                            unchangedRecords++;
+                            log.debug("Пропущен без изменений: поставщик {}, штрихкод {}", supplierName, barcode);
                         }
+                    } else {
+                        // Если не существует, создаем новый
+                        Product newProduct = Product.builder()
+                                .supplier(supplier)
+                                .barcode(barcode)
+                                .externalCode(externalCode)
+                                .productName(productName)
+                                .priceWithVat(price)
+                                .quantity(quantity != null ? quantity : 0)
+                                .build();
+                        batchProducts.add(newProduct);
+                        newRecords++;
+                        log.debug("Добавлен новый продукт: поставщик {}, штрихкод {}", supplierName, barcode);
+                    }
+
+                    // Логируем первые 3 записи для отладки (только новые и обновленные)
+                    int totalProcessed = newRecords + updatedRecords;
+                    if (totalProcessed <= 3) {
+                        log.info("Пример обработанной записи {}: Поставщик={}, Штрихкод={}, Товар={}, Цена={}, Количество={}",
+                                totalProcessed, supplierName, barcode, productName, price, quantity);
+                    }
+
+                    // Пакетное сохранение
+                    if (batchProducts.size() >= batchSize) {
+                        productRepository.saveAll(batchProducts);
+                        batchProducts.clear();
+                        log.info("Processed {} records (new: {}, updated: {})...", newRecords + updatedRecords, newRecords, updatedRecords);
                     }
                 } catch (Exception e) {
                     failed++;
@@ -158,23 +209,18 @@ public class ExcelProcessingService {
             }
 
             // Формируем сообщение с примерами дубликатов
-            String message;
-            if (!duplicateExamples.isEmpty()) {
-                message = String.format("Обработано записей: %d, пропущено дубликатов В ФАЙЛЕ: %d, ошибок: %d. Время выполнения: %d мс. Примеры дубликатов: %s",
-                        processed, skipped, failed, (System.currentTimeMillis() - startTime), String.join("; ", duplicateExamples));
-            } else {
-                message = String.format("Обработано записей: %d, пропущено дубликатов В ФАЙЛЕ: %d, ошибок: %d. Время выполнения: %d мс",
-                        processed, skipped, failed, (System.currentTimeMillis() - startTime));
-            }
+            int totalProcessed = newRecords + updatedRecords;
+            String message = String.format("Добавлено новых записей: %d, обновлено: %d, без изменений: %d, пропущено дубликатов в файле: %d, ошибок: %d. Время выполнения: %d мс",
+                    newRecords, updatedRecords, unchangedRecords, skipped, failed, (System.currentTimeMillis() - startTime));
 
             response.setSuccess(true);
             response.setMessage(message);
-            response.setProcessedRecords(processed);
+            response.setProcessedRecords(totalProcessed);
             response.setFailedRecords(failed);
             response.setDuplicateExamples(duplicateExamples); // Устанавливаем примеры дубликатов
 
-            log.info("File processing completed. Total: {}, Success: {}, Skipped duplicates in file: {}, Failed: {}, Time: {} ms",
-                    processed + skipped + failed, processed, skipped, failed, (System.currentTimeMillis() - startTime));
+            log.info("File processing completed. New: {}, Updated: {}, Unchanged: {}, Skipped duplicates in file: {}, Failed: {}, Time: {} ms",
+                    newRecords, updatedRecords, unchangedRecords, skipped, failed, (System.currentTimeMillis() - startTime));
 
         } catch (Exception e) {
             log.error("Ошибка обработки файла", e);
@@ -183,58 +229,6 @@ public class ExcelProcessingService {
         }
 
         return response;
-    }
-
-    private Product processDataRow(Row row, int supplierNameCol, int barcodeCol,
-                                   int externalProductCodeCol, int productNameCol, int priceCol,
-                                   int quantityCol, Map<String, Supplier> supplierCache) {
-        String supplierName = getCellStringValue(row.getCell(supplierNameCol));
-        String barcode = getCellStringValue(row.getCell(barcodeCol));
-        String externalCode = getCellStringValue(row.getCell(externalProductCodeCol));
-        String productName = getCellStringValue(row.getCell(productNameCol));
-        Double price = getCellNumericValue(row.getCell(priceCol));
-        Integer quantity = getCellIntegerValue(row.getCell(quantityCol));
-
-        if (supplierName == null || supplierName.trim().isEmpty()) {
-            throw new IllegalArgumentException("Не указано наименование поставщика");
-        }
-        if (barcode == null || barcode.trim().isEmpty()) {
-            throw new IllegalArgumentException("Не указан штрихкод");
-        }
-
-        supplierName = supplierName.trim();
-        barcode = barcode.trim();
-
-        if (!isValidBarcode(barcode)) {
-            throw new IllegalArgumentException("Неверный формат штрихкода: " + barcode);
-        }
-
-        // Используем кэш поставщиков для оптимизации
-        Supplier supplier = supplierCache.get(supplierName);
-        if (supplier == null) {
-            supplier = supplierRepository.findById(supplierName)
-                    .orElse(Supplier.builder().supplierName(supplierName).build());
-            supplierRepository.save(supplier);
-            supplierCache.put(supplierName, supplier);
-        }
-
-        // Создаем продукт с правильными данными
-        Product product = Product.builder()
-                .supplier(supplier)
-                .barcode(barcode)
-                .externalCode(externalCode)
-                .productName(productName) // Сохраняем правильное имя продукта
-                .priceWithVat(price)
-                .quantity(quantity != null ? quantity : 0)
-                .build();
-
-        // Логируем для отладки
-        if (product.getProductName() == null || product.getProductName().equals(supplierName)) {
-            log.warn("Возможная проблема с именем продукта: supplierName={}, productName={}",
-                    supplierName, productName);
-        }
-
-        return product;
     }
 
     private int findColumnIndex(Sheet sheet, String expectedHeader) {

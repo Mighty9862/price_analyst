@@ -7,6 +7,7 @@ import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
 import java.util.List;
+import java.util.Optional;
 
 @Repository
 public interface ProductRepository extends JpaRepository<Product, Long> {
@@ -24,6 +25,10 @@ public interface ProductRepository extends JpaRepository<Product, Long> {
     List<Product> findBestPricesByBarcodes(@Param("barcodes") List<String> barcodes);
 
     boolean existsByBarcode(String barcode);
+
+    Optional<Product> findBySupplier_SupplierNameAndBarcode(String supplierName, String barcode);
+
+    boolean existsBySupplier_SupplierNameAndBarcode(String supplierName, String barcode);
 
     // Статистика по количеству товаров
     @Query("SELECT COUNT(p) FROM Product p")

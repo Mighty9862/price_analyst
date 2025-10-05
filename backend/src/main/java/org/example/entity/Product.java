@@ -9,8 +9,7 @@ import org.hibernate.annotations.BatchSize;
         @Index(name = "idx_barcode", columnList = "barcode"),
         @Index(name = "idx_barcode_price", columnList = "barcode, price_with_vat"),
         @Index(name = "idx_supplier_barcode", columnList = "supplier_name, barcode")
-        // УБИРАЕМ уникальное ограничение - оставляем только индексы
-})
+}, uniqueConstraints = @UniqueConstraint(columnNames = {"supplier_name", "barcode"}))
 @Data
 @NoArgsConstructor
 @AllArgsConstructor
