@@ -43,12 +43,12 @@ public class TemplateController {
             }
 
             Row exampleRow1 = sheet.createRow(1);
-            exampleRow1.createCell(0).setCellValue("4600905000332");
+            exampleRow1.createCell(0).setCellValue("4606068663735");
             exampleRow1.createCell(1).setCellValue(10);
 
             Row exampleRow2 = sheet.createRow(2);
             exampleRow2.createCell(0).setCellValue("4600905000264");
-            exampleRow2.createCell(1).setCellValue(5);
+            exampleRow2.createCell(1).setCellValue(2);
 
             for (int i = 0; i < headers.length; i++) {
                 sheet.autoSizeColumn(i);
