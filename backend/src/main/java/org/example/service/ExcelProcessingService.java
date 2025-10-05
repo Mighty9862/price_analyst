@@ -212,9 +212,6 @@ public class ExcelProcessingService {
             int totalProcessed = newRecords + updatedRecords;
             String message = String.format("Добавлено новых записей: %d, обновлено: %d, без изменений: %d, пропущено дубликатов в файле: %d, ошибок: %d. Время выполнения: %d мс",
                     newRecords, updatedRecords, unchangedRecords, skipped, failed, (System.currentTimeMillis() - startTime));
-            if (!duplicateExamples.isEmpty()) {
-                message += String.format(". Примеры дубликатов: %s", String.join("; ", duplicateExamples));
-            }
 
             response.setSuccess(true);
             response.setMessage(message);
