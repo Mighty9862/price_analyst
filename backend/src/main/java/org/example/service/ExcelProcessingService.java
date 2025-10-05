@@ -16,7 +16,6 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Optional;
 import java.util.Objects;
 
 @Slf4j
@@ -212,9 +211,16 @@ public class ExcelProcessingService {
             int totalProcessed = newRecords + updatedRecords;
             String message = String.format("Добавлено новых записей: %d, обновлено: %d, без изменений: %d, пропущено дубликатов в файле: %d, ошибок: %d. Время выполнения: %d мс",
                     newRecords, updatedRecords, unchangedRecords, skipped, failed, (System.currentTimeMillis() - startTime));
+            if (!duplicateExamples.isEmpty()) {
+                message += String.format(". Примеры дубликатов: %s", String.join("; ", duplicateExamples));
+            }
 
             response.setSuccess(true);
             response.setMessage(message);
+            response.setNewRecords(newRecords);
+            response.setUpdatedRecords(updatedRecords);
+            response.setUnchangedRecords(unchangedRecords);
+            response.setSkippedRecords(skipped);
             response.setProcessedRecords(totalProcessed);
             response.setFailedRecords(failed);
             response.setDuplicateExamples(duplicateExamples); // Устанавливаем примеры дубликатов

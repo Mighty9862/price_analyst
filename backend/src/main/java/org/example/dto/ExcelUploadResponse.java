@@ -1,4 +1,3 @@
-// dto/ExcelUploadResponse.java
 package org.example.dto;
 
 import lombok.AllArgsConstructor;
@@ -15,7 +14,11 @@ import java.util.List;
 public class ExcelUploadResponse {
     private boolean success;
     private String message;
+    private int newRecords;
+    private int updatedRecords;
+    private int unchangedRecords;
+    private int skippedRecords;
     private int processedRecords;
     private int failedRecords;
-    private List<String> duplicateExamples; // Добавляем примеры дубликатов
+    private List<String> duplicateExamples; // Примеры дубликатов
 }
