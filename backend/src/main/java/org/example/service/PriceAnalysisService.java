@@ -49,12 +49,26 @@ public class PriceAnalysisService {
                 String barcode = getCellStringValue(row.getCell(barcodeCol));
                 Integer quantity = getCellIntegerValue(row.getCell(quantityCol));
 
-                if (barcode != null && !barcode.trim().isEmpty() && isValidBarcode(barcode)) {
-                    barcode = barcode.trim();
-                    barcodes.add(barcode);
-                    barcodeQuantities.put(barcode, quantity);
-                    rowDataList.add(new RowData(barcode, quantity, i));
+                if (barcode == null || barcode.trim().isEmpty()) {
+                    results.add(createErrorResult(null, quantity, i + 1, "Штрихкод отсутствует или пустой"));
+                    continue;
                 }
+
+                barcode = barcode.trim();
+
+                if (!isValidBarcode(barcode)) {
+                    results.add(createErrorResult(barcode, quantity, i + 1, "Недопустимый формат штрихкода: " + barcode));
+                    continue;
+                }
+
+                if (quantity == null || quantity <= 0) {
+                    results.add(createErrorResult(barcode, quantity, i + 1, "Количество должно быть больше нуля"));
+                    continue;
+                }
+
+                barcodes.add(barcode);
+                barcodeQuantities.put(barcode, quantity);
+                rowDataList.add(new RowData(barcode, quantity, i));
             }
 
             log.info("Found {} unique barcodes in file", barcodes.size());
@@ -92,56 +106,103 @@ public class PriceAnalysisService {
                     if (products == null || products.isEmpty()) {
                         // Товар не найден в базе
                         results.add(createManualProcessingResult(rowData.barcode, rowData.quantity, "Товар не найден в базе"));
-                    } else {
-                        // Сортируем по цене ascending
-                        List<Product> sortedProducts = products.stream()
-                                .sorted(Comparator.comparing(Product::getPriceWithVat))
-                                .toList();
-
-                        // Жадно набираем количество от самых дешевых
-                        List<PriceAnalysisResult.SupplierDetail> supplierDetails = new ArrayList<>();
-                        int remainingQuantity = rowData.quantity;
-                        double totalPrice = 0.0;
-                        String productName = sortedProducts.get(0).getProductName(); // Берем имя от первого (они должны быть одинаковыми)
-                        boolean enoughQuantity = true;
-
-                        for (Product p : sortedProducts) {
-                            if (remainingQuantity <= 0) break;
-
-                            if (p.getQuantity() == null || p.getQuantity() <= 0) continue;
-
-                            int take = Math.min(remainingQuantity, p.getQuantity());
-                            supplierDetails.add(PriceAnalysisResult.SupplierDetail.builder()
-                                    .supplierName(p.getSupplier().getSupplierName())
-                                    .price(p.getPriceWithVat())
-                                    .quantityTaken(take)
-                                    .supplierQuantity(p.getQuantity())
-                                    .build());
-
-                            totalPrice += take * p.getPriceWithVat();
-                            remainingQuantity -= take;
-                        }
-
-                        if (remainingQuantity > 0) {
-                            // Не набрали, но выводим что есть
-                            enoughQuantity = false;
-                        }
-
-                        PriceAnalysisResult result = PriceAnalysisResult.builder()
-                                .barcode(rowData.barcode)
-                                .quantity(rowData.quantity)
-                                .productName(productName != null ? productName : "Не указано")
-                                .bestSuppliers(supplierDetails)
-                                .totalPrice(totalPrice)
-                                .requiresManualProcessing(!enoughQuantity)
-                                .message(enoughQuantity ? null : "Недостаточно количества на складе. Доступно только " + (rowData.quantity - remainingQuantity) + " из " + rowData.quantity)
-                                .build();
-
-                        results.add(result);
+                        continue;
                     }
+
+                    // Сортируем по цене ascending
+                    List<Product> sortedProducts = products.stream()
+                            .sorted(Comparator.comparing(Product::getPriceWithVat))
+                            .toList();
+
+                    // Проверяем, есть ли поставщики с ненулевым количеством
+                    boolean hasAvailableProducts = sortedProducts.stream()
+                            .anyMatch(p -> p.getQuantity() != null && p.getQuantity() > 0);
+
+                    if (!hasAvailableProducts) {
+                        results.add(createManualProcessingResult(rowData.barcode, rowData.quantity,
+                                "Нет доступного количества у поставщиков для товара"));
+                        continue;
+                    }
+
+                    // Жадно набираем количество от самых дешевых
+                    List<PriceAnalysisResult.SupplierDetail> supplierDetails = new ArrayList<>();
+                    int remainingQuantity = rowData.quantity;
+                    double totalPrice = 0.0;
+                    String productName = sortedProducts.get(0).getProductName(); // Берем имя от первого (они должны быть одинаковыми)
+                    StringBuilder messageBuilder = new StringBuilder();
+                    boolean enoughQuantity = true;
+
+                    for (Product p : sortedProducts) {
+                        if (remainingQuantity <= 0) break;
+
+                        if (p.getQuantity() == null || p.getQuantity() <= 0) continue;
+
+                        int take = Math.min(remainingQuantity, p.getQuantity());
+                        supplierDetails.add(PriceAnalysisResult.SupplierDetail.builder()
+                                .supplierName(p.getSupplier().getSupplierName())
+                                .price(p.getPriceWithVat())
+                                .quantityTaken(take)
+                                .supplierQuantity(p.getQuantity())
+                                .build());
+
+                        totalPrice += take * p.getPriceWithVat();
+                        remainingQuantity -= take;
+                    }
+
+                    if (remainingQuantity > 0) {
+                        // Не набрали, но выводим что есть
+                        enoughQuantity = false;
+                    }
+
+                    // Формируем сообщение в зависимости от ситуации
+                    if (enoughQuantity && supplierDetails.size() == 1) {
+                        // Успешно взяли всё у одного поставщика
+                        messageBuilder.append(String.format("Взято %d шт. у поставщика %s по цене %.2f за единицу",
+                                rowData.quantity, supplierDetails.get(0).getSupplierName(), supplierDetails.get(0).getPrice()));
+                    } else if (enoughQuantity && supplierDetails.size() > 1) {
+                        // Взяли у нескольких поставщиков
+                        messageBuilder.append("Взято у нескольких поставщиков: ");
+                        for (int i = 0; i < supplierDetails.size(); i++) {
+                            PriceAnalysisResult.SupplierDetail detail = supplierDetails.get(i);
+                            messageBuilder.append(String.format("%d шт. у %s по цене %.2f",
+                                    detail.getQuantityTaken(), detail.getSupplierName(), detail.getPrice()));
+                            if (i < supplierDetails.size() - 1) {
+                                messageBuilder.append("; ");
+                            }
+                        }
+                    } else if (!enoughQuantity && !supplierDetails.isEmpty()) {
+                        // Недостаточно количества, взяли что есть
+                        int takenQuantity = rowData.quantity - remainingQuantity;
+                        messageBuilder.append(String.format("Недостаточно количества. Доступно только %d из %d шт. Взято: ",
+                                takenQuantity, rowData.quantity));
+                        for (int i = 0; i < supplierDetails.size(); i++) {
+                            PriceAnalysisResult.SupplierDetail detail = supplierDetails.get(i);
+                            messageBuilder.append(String.format("%d шт. у %s по цене %.2f",
+                                    detail.getQuantityTaken(), detail.getSupplierName(), detail.getPrice()));
+                            if (i < supplierDetails.size() - 1) {
+                                messageBuilder.append("; ");
+                            }
+                        }
+                        messageBuilder.append(String.format(". Не хватает %d шт.", remainingQuantity));
+                    } else {
+                        // Нет доступного количества вообще
+                        messageBuilder.append("Нет доступного количества у поставщиков для товара");
+                    }
+
+                    PriceAnalysisResult result = PriceAnalysisResult.builder()
+                            .barcode(rowData.barcode)
+                            .quantity(rowData.quantity)
+                            .productName(productName != null ? productName : "Не указано")
+                            .bestSuppliers(supplierDetails)
+                            .totalPrice(totalPrice > 0 ? totalPrice : null)
+                            .requiresManualProcessing(!enoughQuantity || supplierDetails.isEmpty())
+                            .message(messageBuilder.toString())
+                            .build();
+
+                    results.add(result);
                 } catch (Exception e) {
                     log.warn("Ошибка обработки строки {}: {}", rowData.rowNumber + 1, e.getMessage());
-                    results.add(createErrorResult(rowData.barcode, rowData.quantity, e));
+                    results.add(createErrorResult(rowData.barcode, rowData.quantity, rowData.rowNumber + 1, e.getMessage()));
                 }
             }
 
@@ -171,22 +232,22 @@ public class PriceAnalysisService {
                 .productName(reason)
                 .bestSuppliers(Collections.emptyList())
                 .totalPrice(null)
-                .message(null)
+                .message(reason)
                 .build();
     }
 
     /**
      * Создает результат с ошибкой
      */
-    private PriceAnalysisResult createErrorResult(String barcode, Integer quantity, Exception e) {
+    private PriceAnalysisResult createErrorResult(String barcode, Integer quantity, int rowNumber, String errorMessage) {
         return PriceAnalysisResult.builder()
                 .barcode(barcode)
                 .quantity(quantity)
                 .requiresManualProcessing(true)
-                .productName("Ошибка обработки: " + e.getMessage())
+                .productName("Ошибка обработки строки " + rowNumber + ": " + errorMessage)
                 .bestSuppliers(Collections.emptyList())
                 .totalPrice(null)
-                .message(null)
+                .message("Ошибка обработки строки " + rowNumber + ": " + errorMessage)
                 .build();
     }
 
@@ -242,7 +303,7 @@ public class PriceAnalysisService {
     }
 
     private Integer getCellIntegerValue(Cell cell) {
-        if (cell == null) return 0;
+        if (cell == null) return null;
 
         return switch (cell.getCellType()) {
             case NUMERIC -> (int) cell.getNumericCellValue();
@@ -250,10 +311,10 @@ public class PriceAnalysisService {
                 try {
                     yield Integer.parseInt(cell.getStringCellValue());
                 } catch (NumberFormatException e) {
-                    yield 0;
+                    yield null;
                 }
             }
-            default -> 0;
+            default -> null;
         };
     }
 
