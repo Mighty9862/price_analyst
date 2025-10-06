@@ -9,6 +9,7 @@ import ErrorIcon from "./components/ui/icons/ErrorIcon";
 import DownloadIcon from "./components/ui/icons/DownloadIcon";
 import { useAtom } from "jotai";
 import { isAdminAtom } from "@/store/store";
+import { useNavigate } from "react-router-dom";
 
 interface UploadResponse {
   success: boolean;
@@ -27,6 +28,7 @@ function Admin() {
   const ADMIN_PASSWORD = import.meta.env.VITE_ADMIN_PASSWORD;
 
   const [isAdmin, setIsAdmin] = useAtom(isAdminAtom);
+  const navigate = useNavigate();
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [password, setPassword] = useState("");
   const [passwordError, setPasswordError] = useState("");
@@ -245,10 +247,13 @@ function Admin() {
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.7, delay: 0.4 }}
-              className="text-lg text-blue-700 md:text-xl"
+              className="mb-6 text-lg text-blue-700 md:text-xl"
             >
               Управление данными поставщиков
             </motion.p>
+            <Button onClick={() => navigate("/")}>
+              Перейти на главную страницу
+            </Button>
           </div>
 
           {/* Карточка загрузки данных */}

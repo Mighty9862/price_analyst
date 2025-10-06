@@ -416,10 +416,7 @@ function Home() {
                       Найдены лучшие цены для ваших товаров
                     </p>
                   </div>
-                  <div className="flex items-center gap-4">
-                    <span className="rounded-full bg-blue-100 px-4 py-2 text-sm font-medium text-blue-800">
-                      {analysisResults.length} товаров
-                    </span>
+                  <div className="mt-4 flex justify-end">
                     <Button
                       onClick={exportResultsToExcel}
                       disabled={exportLoading}

@@ -5,6 +5,7 @@ const Button = ({
   className = "",
   onClick,
   disabled = false,
+  ...rest
 }: {
   children: React.ReactNode;
   primary?: boolean;
@@ -24,6 +25,7 @@ const Button = ({
     animate={{ opacity: 1, y: 0 }}
     onClick={disabled ? undefined : onClick}
     disabled={disabled}
+    {...rest}
   >
     {children}
   </motion.button>
